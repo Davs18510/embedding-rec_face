@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Sistema de Reconhecimento Facial com Embeddings - Autenticação biométrica avançada com convergência automática">
+    <title>FaceAuth — Reconhecimento Facial</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+</head>
+<body>
+    <!-- Animated Background Particles -->
+    <div class="bg-particles" id="bgParticles"></div>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">
+                <div class="logo-icon">
+                    <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="20" cy="15" r="7" stroke="currentColor" stroke-width="2"/>
+                        <path d="M8 34c0-6.627 5.373-12 12-12s12 5.373 12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        <rect x="2" y="2" width="36" height="36" rx="8" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </div>
+                <span class="logo-text">FaceAuth</span>
+            </div>
+            <div class="header-right">
+                <div class="server-badge" id="serverBadge" title="Servidor Local do Projeto">
+                    <span class="server-dot"></span>
+                    <span class="server-text" id="serverStatusText">Servidor Local</span>
+                </div>
+                <div class="header-status" id="headerStatus">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Inicializando...</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="main-container">
+        <!-- Loading Screen -->
+        <section class="loading-screen" id="loadingScreen">
+            <div class="loading-content">
+                <div class="loading-spinner">
+                    <div class="spinner-ring"></div>
+                    <div class="spinner-ring"></div>
+                    <div class="spinner-ring"></div>
+                </div>
+                <h2 class="loading-title">Carregando Modelos de IA</h2>
+                <p class="loading-subtitle" id="loadingStatus">Inicializando face-api.js...</p>
+                <div class="loading-progress">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Camera Section -->
+        <section class="camera-section" id="cameraSection" style="display: none;">
+            <div class="section-header">
+                <h1 class="section-title">Reconhecimento Facial</h1>
+                <p class="section-subtitle">Sistema de autenticação biométrica com convergência automática</p>
+            </div>
+
+            <div class="camera-layout">
+                <!-- Camera Feed -->
+                <div class="camera-wrapper">
+                    <div class="camera-frame" id="cameraFrame">
+                        <video id="videoFeed" autoplay muted playsinline></video>
+                        <canvas id="overlayCanvas"></canvas>
+
+                        <!-- Scan Line Animation -->
+                        <div class="scan-line" id="scanLine"></div>
+
+                        <!-- Corner Markers -->
+                        <div class="corner-marker top-left"></div>
+                        <div class="corner-marker top-right"></div>
+                        <div class="corner-marker bottom-left"></div>
+                        <div class="corner-marker bottom-right"></div>
+
+                        <!-- Recording Indicator -->
+                        <div class="recording-indicator" id="recordingIndicator">
+                            <span class="rec-dot"></span>
+                            <span class="rec-text">REC</span>
+                        </div>
+
+                        <!-- Auth Result Overlay -->
+                        <div class="auth-overlay" id="authOverlay">
+                            <div class="auth-icon" id="authIcon"></div>
+                            <span class="auth-text" id="authText"></span>
+                        </div>
+                    </div>
+
+                    <!-- Camera Info Bar -->
+                    <div class="camera-info">
+                        <div class="info-item">
+                            <span class="info-label">Faces Detectadas</span>
+                            <span class="info-value" id="faceCount">0</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Status</span>
+                            <span class="info-value info-status-text" id="authStatusText">Pronto</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Distância</span>
+                            <span class="info-value" id="distanceValue">—</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Control Panel -->
+                <div class="control-panel">
+                    <!-- Registration Card -->
+                    <div class="control-card" id="registrationCard">
+                        <div class="card-header">
+                            <div class="card-icon register-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                                    <circle cx="9" cy="7" r="4"/>
+                                    <line x1="19" y1="8" x2="19" y2="14"/>
+                                    <line x1="22" y1="11" x2="16" y2="11"/>
+                                </svg>
+                            </div>
+                            <h3 class="card-title">Registro Facial</h3>
+                        </div>
+                        <p class="card-description">
+                            Grave seu rosto olhando para a câmera. O sistema captura amostras automaticamente e para quando as características faciais convergirem com precisão segura.
+                        </p>
+
+                        <!-- Convergence Monitor -->
+                        <div class="convergence-monitor">
+                            <div class="convergence-header">
+                                <span class="convergence-label">Convergência do Modelo</span>
+                                <span class="convergence-status" id="convergenceStatus">Aguardando início da gravação</span>
+                            </div>
+
+                            <!-- Mini Chart -->
+                            <div class="convergence-chart-wrapper">
+                                <canvas id="convergenceChart" class="convergence-chart"></canvas>
+                            </div>
+
+                            <!-- Progress Bar -->
+                            <div class="convergence-progress">
+                                <div class="convergence-bar" id="convergenceBar"></div>
+                            </div>
+
+                            <!-- Metrics Grid -->
+                            <div class="convergence-metrics">
+                                <div class="metric-item">
+                                    <span class="metric-label">Erro Atual</span>
+                                    <span class="metric-value" id="convergenceValue">—</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Limiar</span>
+                                    <span class="metric-value metric-threshold" id="convergenceThreshold">0.0350</span>
+                                </div>
+                                <div class="metric-item">
+                                    <span class="metric-label">Amostras</span>
+                                    <span class="metric-value" id="sampleCountText">0</span>
+                                </div>
+                            </div>
+
+                            <!-- Multi-Angle Pose Coverage -->
+                            <div class="pose-coverage-section">
+                                <div class="pose-coverage-header">
+                                    <span class="pose-coverage-label">Cobertura de Poses & Ângulos</span>
+                                    <span class="pose-current-badge" id="poseIndicator">Aguardando</span>
+                                </div>
+                                <div class="angle-tags" id="angleTags">
+                                    <span class="angle-tag" id="tagFrontal">Frontal</span>
+                                    <span class="angle-tag" id="tagLeft">Esquerda</span>
+                                    <span class="angle-tag" id="tagRight">Direita</span>
+                                    <span class="angle-tag" id="tagDistance">Distância</span>
+                                </div>
+                                <p class="pose-guidance-hint" id="guidanceTip">
+                                    Durante a gravação, olhe de frente, vire suavemente para os lados e varie a distância.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="input-group" id="nameInputGroup">
+                            <label for="userName" class="input-label">Nome do Usuário</label>
+                            <input type="text" id="userName" class="text-input" placeholder="Digite seu nome...">
+                        </div>
+                        <button class="btn btn-primary btn-recording" id="btnStartRecording">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <circle cx="12" cy="12" r="4" fill="currentColor"/>
+                            </svg>
+                            Iniciar Gravação
+                        </button>
+                        <button class="btn btn-danger btn-pulse" id="btnStopRecording" style="display: none;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>
+                            </svg>
+                            Parar Gravação
+                        </button>
+                        <div class="card-divider" id="importDivider">
+                            <span>ou recupere seu perfil</span>
+                        </div>
+                        <button class="btn btn-secondary" id="btnImportProfile" type="button">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
+                            Carregar Parâmetros (JSON)
+                        </button>
+                        <input type="file" id="profileFileInput" accept=".json,application/json" style="display: none;">
+                    </div>
+
+                    <!-- Auth Card -->
+                    <div class="control-card" id="authCard">
+                        <div class="card-header">
+                            <div class="card-icon auth-icon-wrapper">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                                </svg>
+                            </div>
+                            <h3 class="card-title">Autenticação</h3>
+                        </div>
+                        <p class="card-description">
+                            Ative a verificação em tempo real para autenticar rostos contra o embedding registrado.
+                        </p>
+                        <div class="auth-toggle-wrapper">
+                            <label class="toggle-switch" for="authToggle">
+                                <input type="checkbox" id="authToggle">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span class="toggle-label" id="toggleLabel">Verificação Desligada</span>
+                        </div>
+                        <div class="auth-security-info">
+                            <div class="security-badge">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                                </svg>
+                                <span>Similaridade calibrada automaticamente para máxima segurança</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Registered User Card -->
+                    <div class="control-card" id="userCard" style="display: none;">
+                        <div class="card-header">
+                            <div class="card-icon user-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                                    <circle cx="12" cy="7" r="4"/>
+                                </svg>
+                            </div>
+                            <h3 class="card-title">Usuário Registrado</h3>
+                        </div>
+                        <div class="user-info">
+                            <div class="user-avatar" id="userAvatar"></div>
+                            <div class="user-details">
+                                <span class="user-name" id="registeredName">—</span>
+                                <span class="user-meta" id="registeredMeta">—</span>
+                            </div>
+                        </div>
+                        <div class="embedding-visual" id="embeddingVisual">
+                            <label class="input-label">Vetor de Embedding (128D)</label>
+                            <div class="embedding-bars" id="embeddingBars"></div>
+                        </div>
+                        <div class="user-card-actions">
+                            <button class="btn btn-success" id="btnExportProfile" type="button">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="7 10 12 15 17 10"/>
+                                    <line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                                Salvar Parâmetros (JSON)
+                            </button>
+                            <button class="btn btn-secondary" id="btnChangeProfile" type="button">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="17 8 12 3 7 8"/>
+                                    <line x1="12" y1="3" x2="12" y2="15"/>
+                                </svg>
+                                Carregar Outro JSON
+                            </button>
+                            <button class="btn btn-danger" id="btnReset" type="button">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="3 6 5 6 21 6"/>
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                </svg>
+                                Remover Registro
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Log Card -->
+                    <div class="control-card log-card">
+                        <div class="card-header">
+                            <div class="card-icon log-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                    <polyline points="14 2 14 8 20 8"/>
+                                    <line x1="16" y1="13" x2="8" y2="13"/>
+                                    <line x1="16" y1="17" x2="8" y2="17"/>
+                                    <polyline points="10 9 9 9 8 9"/>
+                                </svg>
+                            </div>
+                            <h3 class="card-title">Log de Atividades</h3>
+                        </div>
+                        <div class="log-container" id="logContainer">
+                            <div class="log-entry log-info">
+                                <span class="log-time">--:--:--</span>
+                                <span class="log-message">Sistema aguardando inicialização...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Toast Notification -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>

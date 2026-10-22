@@ -1,0 +1,16 @@
+{
+  "name": "reconhecimento-facial",
+  "version": "1.0.0",
+  "description": "Sistema de Reconhecimento Facial com Embeddings e Servidor Local",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "reconhecimento-facial",
+    "face-api",
+    "biometria"
+  ],
+  "author": "",
+  "license": "ISC"
+}
