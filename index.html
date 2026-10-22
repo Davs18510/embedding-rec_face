@@ -29,6 +29,10 @@
                 <span class="logo-text">FaceAuth</span>
             </div>
             <div class="header-right">
+                <div class="supabase-badge" id="supabaseBadge" title="Status da Base de Dados no Supabase">
+                    <span class="supabase-dot"></span>
+                    <span class="supabase-text" id="supabaseStatusText">Supabase Conectando...</span>
+                </div>
                 <div class="server-badge" id="serverBadge" title="Servidor Local do Projeto">
                     <span class="server-dot"></span>
                     <span class="server-text" id="serverStatusText">Servidor Local</span>
@@ -259,6 +263,20 @@
                             <div class="user-avatar" id="userAvatar"></div>
                             <div class="user-details">
                                 <span class="user-name" id="registeredName">—</span>
+                                <div class="user-id-row" id="userIdRow" title="Clique para copiar o ID">
+                                    <span class="user-id-label">ID:</span>
+                                    <code class="user-id-badge" id="registeredIdVal">—</code>
+                                    <button class="btn-copy-id" id="btnCopyId" type="button" title="Copiar ID">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="user-sync-row" id="userSyncRow">
+                                    <span class="user-sync-dot" id="userSyncDot"></span>
+                                    <span class="user-sync-text" id="userSyncText">Sincronizado com Supabase</span>
+                                </div>
                                 <span class="user-meta" id="registeredMeta">—</span>
                             </div>
                         </div>

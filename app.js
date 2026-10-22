@@ -29,6 +29,8 @@ let isAuthActive = false;
 let registeredDescriptor = null;
 let registeredTemplates = [];  // Galeria de templates faciais em múltiplos ângulos/distâncias
 let registeredName = '';
+let registeredId = '';         // ID único do usuário cadastrado
+let registeredTimestamp = 0;   // Timestamp numérico de criação do cadastro
 let collectedDescriptors = [];
 let collectedSamplesMeta = []; // Amostras com metadata de orientação
 let coveredPerspectives = new Set();
@@ -63,6 +65,8 @@ const els = {
     headerStatus: () => document.getElementById('headerStatus'),
     serverBadge: () => document.getElementById('serverBadge'),
     serverStatusText: () => document.getElementById('serverStatusText'),
+    supabaseBadge: () => document.getElementById('supabaseBadge'),
+    supabaseStatusText: () => document.getElementById('supabaseStatusText'),
     btnStartRecording: () => document.getElementById('btnStartRecording'),
     btnStopRecording: () => document.getElementById('btnStopRecording'),
     btnReset: () => document.getElementById('btnReset'),
@@ -80,6 +84,11 @@ const els = {
     userCard: () => document.getElementById('userCard'),
     registeredName: () => document.getElementById('registeredName'),
     registeredMeta: () => document.getElementById('registeredMeta'),
+    registeredIdVal: () => document.getElementById('registeredIdVal'),
+    btnCopyId: () => document.getElementById('btnCopyId'),
+    userSyncRow: () => document.getElementById('userSyncRow'),
+    userSyncDot: () => document.getElementById('userSyncDot'),
+    userSyncText: () => document.getElementById('userSyncText'),
     userAvatar: () => document.getElementById('userAvatar'),
     embeddingBars: () => document.getElementById('embeddingBars'),
     logContainer: () => document.getElementById('logContainer'),
@@ -118,6 +127,54 @@ async function checkServerStatus() {
     return false;
 }
 
+async function checkSupabaseStatus() {
+    try {
+        const res = await fetch(`${API_BASE}/api/supabase/status`);
+        if (res.ok) {
+            const data = await res.json();
+            const badge = els.supabaseBadge();
+            const text = els.supabaseStatusText();
+
+            if (data.configured) {
+                if (data.tableReady) {
+                    if (badge) badge.className = 'supabase-badge';
+                    if (text) text.textContent = 'Supabase Conectado';
+                } else {
+                    if (badge) badge.className = 'supabase-badge syncing';
+                    if (text) text.textContent = 'Supabase (Tabela Pendente)';
+                }
+            } else {
+                if (badge) badge.className = 'supabase-badge offline';
+                if (text) text.textContent = 'Supabase (Aguardando .env)';
+            }
+            return data;
+        }
+    } catch (e) {
+        const badge = els.supabaseBadge();
+        const text = els.supabaseStatusText();
+        if (badge) badge.className = 'supabase-badge offline';
+        if (text) text.textContent = 'Supabase Offline';
+    }
+    return null;
+}
+
+function updateUserSyncUI(isSynced, errorMsg = null) {
+    const row = els.userSyncRow();
+    const dot = els.userSyncDot();
+    const text = els.userSyncText();
+    if (!row || !text) return;
+
+    if (isSynced) {
+        if (dot) dot.style.background = '#3ecf8e';
+        text.textContent = 'Sincronizado no Supabase';
+        text.style.color = '#3ecf8e';
+    } else {
+        if (dot) dot.style.background = '#f59e0b';
+        text.textContent = errorMsg ? `Supabase: ${errorMsg}` : 'Supabase (Pendente)';
+        text.style.color = '#f59e0b';
+    }
+}
+
 async function syncUsersFromServer() {
     try {
         const res = await fetch(`${API_BASE}/api/users`);
@@ -125,8 +182,10 @@ async function syncUsersFromServer() {
             const data = await res.json();
             if (data.users && data.users.length > 0) {
                 serverUsers = data.users.map(u => ({
-                    id: u.id,
+                    id: u.id || ('usr_' + Date.now()),
                     name: u.name,
+                    timestamp: u.timestamp || Date.now(),
+                    registeredAt: u.registeredAt || new Date().toISOString(),
                     descriptor: new Float32Array(u.descriptor),
                     templates: Array.isArray(u.templates)
                         ? u.templates.map(t => new Float32Array(t))
@@ -136,6 +195,8 @@ async function syncUsersFromServer() {
                 // Se ainda não temos um usuário ativo exibido na UI, carrega o mais recente
                 if (!registeredDescriptor && serverUsers.length > 0) {
                     const lastUser = serverUsers[serverUsers.length - 1];
+                    registeredId = lastUser.id;
+                    registeredTimestamp = lastUser.timestamp;
                     registeredDescriptor = lastUser.descriptor;
                     registeredTemplates = lastUser.templates || [lastUser.descriptor];
                     registeredName = lastUser.name;
@@ -150,20 +211,37 @@ async function syncUsersFromServer() {
     }
 }
 
-async function saveUserToServer(name, descriptor, templates = []) {
+async function saveUserToServer(id, name, descriptor, templates = [], timestamp = Date.now()) {
     try {
         const res = await fetch(`${API_BASE}/api/users`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                id: id,
                 name: name,
                 descriptor: Array.from(descriptor),
-                templates: templates.map(t => Array.from(t))
+                templates: templates.map(t => Array.from(t)),
+                timestamp: timestamp
             })
         });
         if (res.ok) {
-            addLog(`Cadastro de "${name}" salvo com sucesso no servidor do projeto`, 'success');
+            const result = await res.json();
+            if (result.user && result.user.id) {
+                registeredId = result.user.id;
+            }
+            addLog(`Cadastro de "${name}" salvo localmente no servidor`, 'success');
+
+            // Verifica se sincronizou com o Supabase
+            if (result.supabaseSync && result.supabaseSync.success) {
+                addLog(`✓ Usuário "${name}" sincronizado automaticamente na base Supabase!`, 'success');
+                updateUserSyncUI(true);
+            } else if (result.supabaseSync && !result.supabaseSync.success) {
+                addLog(`Supabase: ${result.supabaseSync.error || 'Verifique .env'}`, 'warning');
+                updateUserSyncUI(false, result.supabaseSync.error);
+            }
+
             await checkServerStatus();
+            await checkSupabaseStatus();
             await syncUsersFromServer();
             return true;
         }
@@ -179,8 +257,9 @@ async function deleteUserFromServer(nameOrId) {
             method: 'DELETE'
         });
         if (res.ok) {
-            addLog(`Cadastro de "${nameOrId}" excluído do servidor`, 'info');
+            addLog(`Cadastro de "${nameOrId}" excluído do servidor e do Supabase`, 'info');
             await checkServerStatus();
+            await checkSupabaseStatus();
             await syncUsersFromServer();
             return true;
         }
@@ -195,6 +274,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     createParticles();
     loadSavedData();
     await checkServerStatus();
+    await checkSupabaseStatus();
     await syncUsersFromServer();
     await loadModels();
     await startCamera();
@@ -228,12 +308,14 @@ function loadSavedData() {
             const data = JSON.parse(saved);
             registeredDescriptor = new Float32Array(data.descriptor);
             registeredName = data.name || 'Usuário';
+            registeredId = data.id || ('usr_' + (data.timestamp || Date.now()) + '_' + Math.random().toString(36).substring(2, 8));
+            registeredTimestamp = data.timestamp || Date.now();
             if (Array.isArray(data.templates) && data.templates.length > 0) {
                 registeredTemplates = data.templates.map(t => new Float32Array(t));
             } else {
                 registeredTemplates = [registeredDescriptor];
             }
-            addLog('Dados de registro carregados do armazenamento local', 'info');
+            addLog(`Dados de "${registeredName}" (ID: ${registeredId}) carregados do armazenamento local`, 'info');
         }
     } catch (e) {
         console.warn('Erro ao carregar dados salvos:', e);
@@ -243,13 +325,21 @@ function loadSavedData() {
 // ===================== SAVE DATA =====================
 function saveData() {
     try {
+        if (!registeredId) {
+            registeredId = 'usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+        }
+        if (!registeredTimestamp) {
+            registeredTimestamp = Date.now();
+        }
         const data = {
             version: '1.0',
             appName: 'FaceAuth',
+            id: registeredId,
             descriptor: Array.from(registeredDescriptor),
             templates: registeredTemplates.map(t => Array.from(t)),
             name: registeredName,
-            timestamp: Date.now()
+            timestamp: registeredTimestamp,
+            registeredAt: new Date(registeredTimestamp).toISOString()
         };
         localStorage.setItem('faceauth_data', JSON.stringify(data));
     } catch (e) {
@@ -1110,24 +1200,30 @@ function finishRegistration(autoConverged = false) {
         }
     }
 
+    // Gera ID único e timestamp caso ainda não existam para este usuário
+    if (!registeredId) {
+        registeredId = 'usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+    }
+    registeredTimestamp = Date.now();
+
     registeredDescriptor = centroid;
     registeredTemplates = templates;
     registeredName = name;
 
     const finalError = computeConvergenceError();
 
-    // Persiste localmente e no servidor
+    // Persiste localmente e sincroniza automaticamente com o Supabase
     saveData();
-    saveUserToServer(name, centroid, templates);
+    saveUserToServer(registeredId, name, centroid, templates, registeredTimestamp);
 
     showRegisteredUser();
 
     const methodLabel = autoConverged ? 'convergência multi-ângulo automática' : 'parada manual';
     addLog(
-        `Rosto de "${name}" registrado com sucesso! (${collectedDescriptors.length} amostras, ${templates.length} templates de ângulo/distância)`,
+        `Rosto de "${name}" registrado! (ID: ${registeredId}, ${collectedDescriptors.length} amostras) — Envio automático iniciado.`,
         'success'
     );
-    showToast(`Rosto de "${name}" cadastrado com sucesso em múltiplos ângulos!`, 'success');
+    showToast(`Rosto de "${name}" cadastrado e sincronizado automaticamente!`, 'success');
 
     collectedDescriptors = [];
     collectedSamplesMeta = [];
@@ -1139,7 +1235,14 @@ function showRegisteredUser() {
     els.userCard().style.display = 'block';
 
     els.registeredName().textContent = registeredName;
-    els.registeredMeta().textContent = `Embedding 128D • ${new Date().toLocaleDateString('pt-BR')}`;
+    
+    // Atualiza ID do usuário
+    if (els.registeredIdVal()) {
+        els.registeredIdVal().textContent = registeredId || 'usr_local';
+    }
+
+    const regDate = registeredTimestamp ? new Date(registeredTimestamp) : new Date();
+    els.registeredMeta().textContent = `Embedding 128D • ${regDate.toLocaleDateString('pt-BR')} ${regDate.toLocaleTimeString('pt-BR')}`;
 
     // Avatar initial
     els.userAvatar().textContent = registeredName.charAt(0).toUpperCase();
@@ -1179,16 +1282,19 @@ function renderEmbeddingBars() {
 
 function resetRegistration() {
     const oldName = registeredName;
+    const oldId = registeredId;
     registeredDescriptor = null;
     registeredName = '';
+    registeredId = '';
+    registeredTimestamp = 0;
     collectedDescriptors = [];
     convergenceHistory = [];
 
     localStorage.removeItem('faceauth_data');
 
     // Remove do servidor
-    if (oldName) {
-        deleteUserFromServer(oldName);
+    if (oldId || oldName) {
+        deleteUserFromServer(oldId || oldName);
     }
 
     els.userCard().style.display = 'none';
@@ -1292,6 +1398,20 @@ function setupEventListeners() {
         });
     }
 
+    // Botão Copiar ID do usuário no card
+    if (els.btnCopyId()) {
+        els.btnCopyId().addEventListener('click', (e) => {
+            e.stopPropagation();
+            copyUserIdToClipboard();
+        });
+    }
+    const userIdRow = document.getElementById('userIdRow');
+    if (userIdRow) {
+        userIdRow.addEventListener('click', () => {
+            copyUserIdToClipboard();
+        });
+    }
+
     // Setup drag and drop for JSON file anywhere
     setupDragAndDrop();
 }
@@ -1310,7 +1430,9 @@ function exportProfileJSON() {
     const payload = {
         version: '1.0',
         appName: 'FaceAuth',
+        id: registeredId,
         name: registeredName || 'Usuário',
+        timestamp: registeredTimestamp || Date.now(),
         exportedAt: new Date().toISOString(),
         parameters: {
             dimensions: registeredDescriptor.length,
@@ -1363,20 +1485,15 @@ function importProfileFromFile(file) {
             const rawContent = e.target.result;
             const data = JSON.parse(rawContent);
 
-            // Suporta múltiplos formatos:
-            // 1. { parameters: { descriptor: [...], recommendedThreshold: 0.45 }, name: "..." }
-            // 2. { descriptor: [...], name: "...", threshold: 0.45 }
-            // 3. Array direto de 128 números
             let descriptorArray = null;
             let name = data.name || (data.parameters && data.parameters.name) || 'Usuário';
-            let threshold = null;
+            let importedId = data.id || (data.parameters && data.parameters.id) || ('usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8));
+            let importedTs = data.timestamp || (data.exportedAt ? new Date(data.exportedAt).getTime() : Date.now());
 
             if (data.parameters && Array.isArray(data.parameters.descriptor)) {
                 descriptorArray = data.parameters.descriptor;
-                threshold = data.parameters.recommendedThreshold;
             } else if (Array.isArray(data.descriptor)) {
                 descriptorArray = data.descriptor;
-                threshold = data.threshold || data.recommendedThreshold;
             } else if (Array.isArray(data) && data.length === 128) {
                 descriptorArray = data;
             }
@@ -1385,13 +1502,11 @@ function importProfileFromFile(file) {
                 throw new Error('O arquivo não contém um vetor de características faciais válido (são necessárias 128 dimensões).');
             }
 
-            // Valida se todos os elementos são numéricos finitos
             const isValidNumbers = descriptorArray.every(val => typeof val === 'number' && Number.isFinite(val));
             if (!isValidNumbers) {
                 throw new Error('Os valores do embedding facial no arquivo JSON são inválidos.');
             }
 
-            // Normaliza o vetor caso não esteja perfeitamente unitário
             const floatDesc = new Float32Array(descriptorArray);
             let norm = 0;
             for (let i = 0; i < 128; i++) {
@@ -1404,11 +1519,11 @@ function importProfileFromFile(file) {
                 }
             }
 
-            // Atribui ao estado
             registeredDescriptor = floatDesc;
             registeredName = name;
+            registeredId = importedId;
+            registeredTimestamp = importedTs;
 
-            // Extrai templates se presentes no JSON
             if (data.parameters && Array.isArray(data.parameters.templates)) {
                 registeredTemplates = data.parameters.templates.map(t => new Float32Array(t));
             } else if (Array.isArray(data.templates)) {
@@ -1417,21 +1532,18 @@ function importProfileFromFile(file) {
                 registeredTemplates = [floatDesc];
             }
 
-            // Persiste localmente e no servidor
             saveData();
-            saveUserToServer(name, floatDesc, registeredTemplates);
+            saveUserToServer(registeredId, name, floatDesc, registeredTemplates, registeredTimestamp);
 
-            // Atualiza UI
             showRegisteredUser();
 
-            // Se a verificação facial estava ativa, reseta overlays
             if (isAuthActive) {
                 hideAuthOverlay();
                 els.cameraFrame().classList.remove('authorized', 'denied');
             }
 
-            addLog(`Parâmetros faciais de "${registeredName}" carregados com sucesso via JSON (128D)`, 'success');
-            showToast(`Perfil de "${registeredName}" importado e sincronizado com o servidor!`, 'success');
+            addLog(`Parâmetros faciais de "${registeredName}" (ID: ${registeredId}) carregados com sucesso (128D)`, 'success');
+            showToast(`Perfil de "${registeredName}" importado e sincronizado com sucesso!`, 'success');
 
         } catch (err) {
             console.error('Erro ao importar JSON:', err);
@@ -1445,6 +1557,27 @@ function importProfileFromFile(file) {
     };
 
     reader.readAsText(file);
+}
+
+
+// ===================== USER ID HELPERS =====================
+
+async function copyUserIdToClipboard() {
+    const idToCopy = registeredId || (els.registeredIdVal() ? els.registeredIdVal().textContent : '');
+    if (!idToCopy || idToCopy === '—') return;
+
+    try {
+        await navigator.clipboard.writeText(idToCopy);
+        showToast(`ID "${idToCopy}" copiado!`, 'success');
+    } catch (e) {
+        const textarea = document.createElement('textarea');
+        textarea.value = idToCopy;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        showToast(`ID "${idToCopy}" copiado!`, 'success');
+    }
 }
 
 /**
