@@ -107,9 +107,126 @@ const els = {
 };
 
 // ===================== SERVER API INTEGRATION =====================
-const API_BASE = (window.location.protocol === 'http:' || window.location.protocol === 'https:')
-    ? ''
-    : 'http://localhost:3000';
+// Sempre aponta para o servidor Node que grava localmente e no Supabase.
+// - Página servida pelo próprio server.js (porta 3000): mesma origem.
+// - Página aberta via file:// ou por outro dev server (ex.: Live Server): localhost:3000.
+const API_BASE = (() => {
+    if (window.FACEAUTH_API_URL) {
+        return String(window.FACEAUTH_API_URL).replace(/\/+$/, '');
+    }
+    if (window.location.protocol === 'file:') {
+        return 'http://localhost:3000';
+    }
+    if (window.location.port === '3000') {
+        return '';
+    }
+    return `${window.location.protocol}//${window.location.hostname || 'localhost'}:3000`;
+})();
+
+const PENDING_SYNC_KEY = 'faceauth_pending_sync';
+const MAX_PENDING_SYNC = 50;
+
+function readPendingSyncQueue() {
+    try {
+        const raw = localStorage.getItem(PENDING_SYNC_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function writePendingSyncQueue(queue) {
+    try {
+        localStorage.setItem(PENDING_SYNC_KEY, JSON.stringify(queue.slice(-MAX_PENDING_SYNC)));
+    } catch (e) {
+        console.warn('Não foi possível salvar a fila de sincronização:', e);
+    }
+}
+
+function buildUserSyncPayload(id, name, descriptor, templates = [], timestamp = Date.now()) {
+    const templateList = (Array.isArray(templates) && templates.length > 0)
+        ? templates
+        : [descriptor];
+    return {
+        id: id || ('usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8)),
+        name: name,
+        descriptor: Array.from(descriptor),
+        templates: templateList.map(t => Array.from(t)),
+        timestamp: timestamp || Date.now()
+    };
+}
+
+function enqueuePendingSync(payload) {
+    const queue = readPendingSyncQueue().filter(item => item.id !== payload.id);
+    queue.push(payload);
+    writePendingSyncQueue(queue);
+}
+
+function dequeuePendingSync(id) {
+    writePendingSyncQueue(readPendingSyncQueue().filter(item => item.id !== id));
+}
+
+let isFlushingPendingSync = false;
+
+// Reenvia automaticamente tudo que não conseguiu chegar ao servidor/Supabase.
+async function flushPendingSync() {
+    if (isFlushingPendingSync) return;
+    const queue = readPendingSyncQueue();
+    if (queue.length === 0) return;
+
+    isFlushingPendingSync = true;
+    const remaining = [];
+    let serverReachable = true;
+
+    for (const payload of queue) {
+        if (!serverReachable) {
+            remaining.push(payload);
+            continue;
+        }
+        try {
+            const res = await fetch(`${API_BASE}/api/users`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const result = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(result.error || `HTTP ${res.status}`);
+
+            if (result.supabaseSync && result.supabaseSync.success) {
+                updateUserSyncUI(true);
+            } else {
+                remaining.push(payload);
+                updateUserSyncUI(false, (result.supabaseSync && result.supabaseSync.error) || 'envio pendente');
+            }
+        } catch (e) {
+            serverReachable = false;
+            remaining.push(payload);
+        }
+    }
+
+    isFlushingPendingSync = false;
+    writePendingSyncQueue(remaining);
+
+    if (remaining.length === 0) {
+        addLog('Fila de sincronização automática concluída com sucesso.', 'success');
+    }
+}
+
+async function ensureProfileBackedUp() {
+    if (!registeredDescriptor || !registeredName) return;
+
+    const id = registeredId || ('usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8));
+    const alreadyOnServer = serverUsers.some(u =>
+        u.id === id || (u.name && u.name.toLowerCase() === registeredName.toLowerCase())
+    );
+
+    if (!alreadyOnServer) {
+        enqueuePendingSync(buildUserSyncPayload(id, registeredName, registeredDescriptor, registeredTemplates, registeredTimestamp));
+    }
+
+    await flushPendingSync();
+}
 
 async function checkServerStatus() {
     try {
@@ -212,43 +329,48 @@ async function syncUsersFromServer() {
 }
 
 async function saveUserToServer(id, name, descriptor, templates = [], timestamp = Date.now()) {
+    const payload = buildUserSyncPayload(id, name, descriptor, templates, timestamp);
+
     try {
         const res = await fetch(`${API_BASE}/api/users`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                id: id,
-                name: name,
-                descriptor: Array.from(descriptor),
-                templates: templates.map(t => Array.from(t)),
-                timestamp: timestamp
-            })
+            body: JSON.stringify(payload)
         });
-        if (res.ok) {
-            const result = await res.json();
-            if (result.user && result.user.id) {
-                registeredId = result.user.id;
-            }
-            addLog(`Cadastro de "${name}" salvo localmente no servidor`, 'success');
+        const result = await res.json().catch(() => ({}));
 
-            // Verifica se sincronizou com o Supabase
-            if (result.supabaseSync && result.supabaseSync.success) {
-                addLog(`✓ Usuário "${name}" sincronizado automaticamente na base Supabase!`, 'success');
-                updateUserSyncUI(true);
-            } else if (result.supabaseSync && !result.supabaseSync.success) {
-                addLog(`Supabase: ${result.supabaseSync.error || 'Verifique .env'}`, 'warning');
-                updateUserSyncUI(false, result.supabaseSync.error);
-            }
-
-            await checkServerStatus();
-            await checkSupabaseStatus();
-            await syncUsersFromServer();
-            return true;
+        if (!res.ok) {
+            throw new Error(result.error || `HTTP ${res.status}`);
         }
+
+        if (result.user && result.user.id) {
+            registeredId = result.user.id;
+        }
+        dequeuePendingSync(payload.id);
+        addLog(`Cadastro de "${name}" salvo localmente no servidor`, 'success');
+
+        // Verifica se sincronizou com o Supabase
+        if (result.supabaseSync && result.supabaseSync.success) {
+            addLog(`✓ Usuário "${name}" sincronizado automaticamente na base Supabase!`, 'success');
+            updateUserSyncUI(true);
+        } else {
+            const errorMsg = (result.supabaseSync && result.supabaseSync.error) || 'envio pendente';
+            addLog(`Supabase: ${errorMsg} — registro mantido na fila de envio automático.`, 'warning');
+            updateUserSyncUI(false, errorMsg);
+            enqueuePendingSync(payload);
+        }
+
+        await checkServerStatus();
+        await checkSupabaseStatus();
+        await syncUsersFromServer();
+        return true;
     } catch (e) {
-        addLog(`Aviso: Servidor inacessível (${e.message}), mantido localmente`, 'warning');
+        // Servidor indisponível no momento do cadastro: guarda na fila e reenvia sozinho
+        enqueuePendingSync(payload);
+        addLog(`Servidor inacessível (${e.message}). Cadastro de "${name}" na fila para envio automático.`, 'warning');
+        updateUserSyncUI(false, 'aguardando servidor');
+        return false;
     }
-    return false;
 }
 
 async function deleteUserFromServer(nameOrId) {
@@ -276,6 +398,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     await checkServerStatus();
     await checkSupabaseStatus();
     await syncUsersFromServer();
+    await ensureProfileBackedUp();
+
+    // Reenvia periodicamente qualquer cadastro que tenha ficado pendente
+    setInterval(() => { flushPendingSync(); }, 15000);
+    window.addEventListener('online', () => { flushPendingSync(); });
+
     await loadModels();
     await startCamera();
     showCameraSection();

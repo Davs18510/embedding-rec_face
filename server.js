@@ -233,37 +233,85 @@ async function checkAndEnsureTableStatus() {
     }
 }
 
-async function sendUserToSupabase(user) {
+// IDs que falharam e devem ser reenviados automaticamente
+const pendingSupabaseSync = new Set();
+const SUPABASE_SYNC_ATTEMPTS = 3;
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function sendUserToSupabase(user, maxAttempts = SUPABASE_SYNC_ATTEMPTS) {
     if (!supabase) {
+        if (user && user.id) pendingSupabaseSync.add(user.id);
         return { success: false, error: 'Supabase não inicializado. Verifique o arquivo .env.' };
     }
 
+    const payload = {
+        id: user.id,
+        name: user.name,
+        embedding: user.descriptor, // Array de 128 números decimais
+        timestamp: user.timestamp || Date.now(),
+        registered_at: user.registeredAt || new Date().toISOString(),
+        updated_at: new Date().toISOString()
+    };
+
+    let lastError = null;
+
     try {
-        const payload = {
-            id: user.id,
-            name: user.name,
-            embedding: user.descriptor, // Array de 128 números decimais
-            timestamp: user.timestamp || Date.now(),
-            registered_at: user.registeredAt || new Date().toISOString(),
-            updated_at: new Date().toISOString()
-        };
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            const { error } = await supabase
+                .from('face_embeddings')
+                .upsert(payload, { onConflict: 'id' });
 
-        const { data, error } = await supabase
-            .from('face_embeddings')
-            .upsert(payload, { onConflict: 'id' });
+            if (!error) {
+                pendingSupabaseSync.delete(user.id);
+                console.log(`[Supabase] 🚀 ✓ Usuário "${user.name}" (ID: ${user.id}) sincronizado automaticamente na base de dados!`);
+                return { success: true };
+            }
 
-        if (error) {
-            console.error(`[Supabase] ❌ Falha ao sincronizar "${user.name}":`, error.message);
-            return { success: false, error: error.message };
+            lastError = error;
+            console.error(`[Supabase] ❌ Tentativa ${attempt}/${maxAttempts} falhou para "${user.name}":`, error.message);
+
+            if (attempt < maxAttempts) {
+                await delay(400 * attempt);
+            }
         }
 
-        console.log(`[Supabase] 🚀 ✓ Usuário "${user.name}" (ID: ${user.id}) sincronizado automaticamente na base de dados!`);
-        return { success: true };
+        pendingSupabaseSync.add(user.id);
+        return { success: false, error: lastError ? lastError.message : 'Erro desconhecido' };
     } catch (err) {
+        pendingSupabaseSync.add(user.id);
         console.error(`[Supabase] Exceção ao sincronizar "${user.name}":`, err.message);
         return { success: false, error: err.message };
     }
 }
+
+// Reenvia periodicamente os registros que falharam (sem bloquear requisições)
+let isRetryingPendingSync = false;
+
+async function retryPendingSupabaseSyncs() {
+    if (!supabase || !supabaseConfigured || pendingSupabaseSync.size === 0 || isRetryingPendingSync) return;
+
+    isRetryingPendingSync = true;
+    try {
+        const users = readUsers();
+        const batch = Array.from(pendingSupabaseSync).slice(0, 10);
+
+        await Promise.all(batch.map(async (id) => {
+            const user = users.find(u => u.id === id);
+            if (!user) {
+                pendingSupabaseSync.delete(id);
+                return;
+            }
+            await sendUserToSupabase(user, 1);
+        }));
+    } finally {
+        isRetryingPendingSync = false;
+    }
+}
+
+setInterval(retryPendingSupabaseSyncs, 30000).unref();
 
 async function syncAllExistingUsersToSupabase() {
     if (!supabase) return { synced: 0, total: 0 };
@@ -278,7 +326,8 @@ async function syncAllExistingUsersToSupabase() {
     let successCount = 0;
 
     for (const u of users) {
-        const result = await sendUserToSupabase(u);
+        // Uma tentativa por usuário no bulk; falhas entram na fila de retentativa automática
+        const result = await sendUserToSupabase(u, 1);
         if (result.success) successCount++;
     }
 
@@ -402,7 +451,7 @@ const server = http.createServer(async (req, res) => {
             success: true,
             message: `Usuário simulado "${newUser.name}" gravado com sucesso!`,
             user: newUser,
-            supabase: supabaseResult
+            supabaseSync: supabaseResult
         });
     }
 
